@@ -9,5 +9,5 @@ fi
 mkdir -p /opt/nginx$postfix/ext
 mkdir -p /opt/nginx$postfix/apps
 
-cp -f /tmp/discover-master/ext/* /opt/nginx$postfix/ext/
-cp -f /tmp/discover-master/apps/* /opt/nginx$postfix/apps/
+cp -f /tmp/discover/ext/* /opt/nginx$postfix/ext/
+cp -f /tmp/discover/apps/* /opt/nginx$postfix/apps/
