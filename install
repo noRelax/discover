@@ -1,0 +1,13 @@
+#!/bin/bash
+
+postfix=$1
+if [ ! -d /opt/nginx$postfix ];then
+	echo "no /opt/nginx$postfix, please install sdeploy/nginx first by 'sd i nginx $postfix'"
+	exit 2
+fi
+
+mkdir -p /opt/nginx$postfix/ext
+mkdir -p /opt/nginx$postfix/apps
+
+cp -f /tmp/discover-master/ext/* /opt/nginx$postfix/ext/
+cp -f /tmp/discover-master/apps/* /opt/nginx$postfix/apps/
