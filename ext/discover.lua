@@ -67,9 +67,13 @@ function discover_register()
 
 	local holdId = url_args["holdId"]
 	local holdHost = url_args["holdHost"]
-	if holdId~=nil and holdHost~=nil then
+	if holdId~=nil then
 		-- 同步主机绑定
-		ngx.shared._discover_holds:set(case.."_"..holdId, holdHost, _discover_get_expires())
+		if holdHost==nil or holdHost=="" then
+			ngx.shared._discover_holds:delete(case.."_"..holdId)
+		else
+			ngx.shared._discover_holds:set(case.."_"..holdId, holdHost, _discover_get_expires())
+		end
 	    return ngx.say( "OK" )
 	end
 
@@ -93,7 +97,7 @@ function discover_register()
 			real_weight = weight
 		end
 
-		_discover_plusPv(case, host, 1)
+		ngx.shared._discover_pvs:set(case.."_"..host, init_pv, _discover_get_expires())
 		hosts[host] = real_weight
 		local hosts_str = _discover_save_hosts(case, hosts, true)
 		ngx.log( ngx.WARN, "***	"..(isSync~=nil and "SYNC	" or "REGISTER	")..(real_weight~=nil and "ADD	" or "REMOVE	")..case.."	"..host.."	"..weight.."	FROM	"..ngx.var.remote_addr.."	["..hosts_str.."]" )
@@ -135,9 +139,7 @@ function discover_fetch(case,hold_id,default_host)
 	local min_host = nil
 	for host, weight in pairs(hosts) do
 		local pv = _discover_getPv(case,host)
-		-- local score = (pv/total_pv)/(weight/total_weight)
 		local score = pv/weight
-		-- ngx.log( ngx.ERR, host.." =>   "..pv.." / "..weight.." = "..score.."       ")
 		if min_score==nil or score<min_score then
 			min_score = score
 			min_host = host
@@ -177,19 +179,26 @@ function discover_check_response()
 	local failed_times = ngx.shared._discover_global:get(failed_key)
 -- ngx.log( ngx.WARN, "***	discover_check_response	"..case.."	"..host.."	["..failed_times.."]" )
 
-	if failed_times~=nil and ngx.status==200 then
+	if failed_times~=nil and (ngx.status<502 or ngx.status>504) then
 		ngx.shared._discover_global:delete(failed_key)
 	end
 
-	if ngx.status>501 then
+	if ngx.status>501 and ngx.status<505 then
 		if failed_times == nil then
-			failed_times = 0
+			ngx.shared._discover_global:set(failed_key, failed_times)
+			failed_times = 1
+		else
+			ngx.shared._discover_global:incr(failed_key, 1)
+			failed_times = failed_times + 1
 		end
-		failed_times = failed_times + 1
-		ngx.shared._discover_global:set(failed_key, failed_times)
+
 		if hold_id ~= nil then
 			ngx.shared._discover_holds:delete(case.."_"..hold_id)
+			for _,discover_host in ipairs(_DISCOVER_HOSTS) do
+				_discover_curl( "http://"..discover_host.."/__discover?token=".._DISCOVER_AUTH_TOKEN.."&case="..case.."&holdId="..hold_id.."&holdHost=&isSync=1&failedTimes="..failed_times )
+			end
 		end
+
 		_discover_plusPv(case, host, failed_times*10)
 		if failed_times >= 3 then
 			-- 失败3次，注销节点
@@ -204,6 +213,8 @@ function discover_check_response()
 				ngx.log( ngx.WARN, "***	DISTRIBUTE	INVALID	"..case.."	"..host.."	TO	"..discover_host.."	["..(result~=nil and result or "").."]" )
 			end
 		end
+
+		-- TODO 想办法找其他节点处理请求，确保不会出现失败
 	end
 end
 
@@ -260,6 +271,8 @@ function _discover_save_hosts(case,hosts,file)
 end
 
 function _discover_get_expires()
+	-- TODO 计算到第二天凌晨4:00的秒数，并确定GC是否自动
+	-- TODO 或考虑跑 crontab 定时清除
 	return 3600
 end
 
@@ -273,9 +286,8 @@ function _discover_http(hostname,path)
 	local host = pos~=nil and hostname:sub(1,pos-1) or hostname
 	local port = pos~=nil and hostname:sub(pos+1) or 80
 	local sock = ngx.socket.tcp()
-    sock:settimeout(300)
+    sock:settimeout(100)
     local ok, err = sock:connect(host, port)
--- ngx.log( ngx.WARN, " ######	["..(err~=nil and err or "nil").."]" )
     if ok then
 		local bytes, err = sock:send("GET "..path.." HTTP/1.0\r\nHost:"..hostname.."\r\n\r\n")
 	    if bytes~=nil then
@@ -284,12 +296,6 @@ function _discover_http(hostname,path)
 		        if data ~= nil then
 		        	result = data
 		        end
-		        -- if data ~= nil then
-		        -- 	ngx.log( ngx.WARN, " ###### Data	["..data.."]" )
-		        -- end
-		        -- if err ~= nil then
-		        -- 	ngx.log( ngx.WARN, " ###### Err	["..err.."]" )
-		        -- end
 			until( data==nil or err~=nil )
 	    end
 	    sock:close()
