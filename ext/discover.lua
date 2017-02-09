@@ -308,7 +308,7 @@ function _discover_curl(url)
 	if url==nil then
 		return nil
 	end
-	local fp = io.popen("curl --connect-timeout 0.1 '"..url.."' 2>/dev/null")
+	local fp = io.popen("curl --connect-timeout 1 '"..url.."' 2>/dev/null")
 	local result = fp:read("*all")
 	fp:close()
 	if result ~= nil then
